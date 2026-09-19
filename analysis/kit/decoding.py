@@ -148,3 +148,51 @@ def diagonal_scores(tg_scores):
     if tg.ndim == 3:
         tg = tg.mean(axis=0)
     return np.diag(tg)
+
+
+def generalization_lag_profile(tg_scores, times=None, *, agg: str = "mean"):
+    """Average each diagonal (train-test lag) of a temporal generalization matrix.
+
+    A temporal generalization matrix holds one score per (train time, test time)
+    pair.  Collapsing every off-diagonal quantifies how long a representation is
+    sustained: values above chance far from lag 0 indicate that a decoder trained at
+    one time still works at another.
+
+    Parameters
+    ----------
+    tg_scores : array_like
+        ``(..., n_train, n_test)``; any leading axes (subjects, bands) are preserved.
+    times : array_like | None
+        Sampling axis of train / test (used only to express the lag in seconds).
+    agg : {'mean', 'median', 'nanmean', 'nanmedian'}
+        Reduction along each diagonal.
+
+    Returns
+    -------
+    curves : np.ndarray
+        Shape ``(..., n_train + n_test - 1)``.
+    lag_times : np.ndarray
+        Lag in seconds when ``times`` is given, otherwise in samples.  Positive lag
+        means "tested later than trained".
+    """
+    tg = np.asarray(tg_scores, dtype=float)
+    if tg.ndim < 2:
+        raise ValueError("tg_scores must end in (n_train, n_test)")
+    reducer = {"mean": np.mean, "median": np.median,
+               "nanmean": np.nanmean, "nanmedian": np.nanmedian}[agg]
+
+    n_train, n_test = tg.shape[-2:]
+    lags = np.arange(-n_train + 1, n_test)
+    curves = np.full(tg.shape[:-2] + (lags.size,), np.nan)
+    for i, lag in enumerate(lags):
+        diagonal = np.diagonal(tg, offset=lag, axis1=-2, axis2=-1)
+        if diagonal.size:
+            curves[..., i] = reducer(diagonal, axis=-1)
+
+    if times is not None:
+        times = np.asarray(times, dtype=float)
+        step = float(np.mean(np.diff(times))) if times.size > 1 else 1.0
+        lag_times = lags * step
+    else:
+        lag_times = lags.astype(float)
+    return curves, lag_times
